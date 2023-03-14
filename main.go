@@ -5,6 +5,7 @@ import (
 	sse "github.com/alexandrevicenzi/go-sse"
 	"github.com/joho/godotenv"
 	amqp "github.com/rabbitmq/amqp091-go"
+	"github.com/rs/cors"
 	"log"
 	"net/http"
 	"os"
@@ -67,8 +68,9 @@ func initRabbit() <-chan amqp.Delivery {
 	return queue
 }
 
-func sendEvent(s *sse.Server, msg amqp.Delivery) {
-	log.Print(msg)
+func sendEvent(s *sse.Server, m amqp.Delivery) {
+	msg := string(m.Body)
+	s.SendMessage("/event/new-event/1", sse.SimpleMessage(msg))
 }
 
 func main() {
@@ -76,13 +78,16 @@ func main() {
 	queue := initRabbit()
 	s := sse.NewServer(nil)
 	//defer s.Shutdown()
-	http.Handle("/new-events", s)
-
 	go func() {
 		for msg := range queue {
 			sendEvent(s, msg)
 		}
 	}()
+
+	serv := http.NewServeMux()
+	serv.Handle("/event/new-event/1", s)
+	handler := cors.AllowAll().Handler(serv)
+	http.ListenAndServe(":8000", handler)
 
 	for {
 	}
