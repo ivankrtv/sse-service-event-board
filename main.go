@@ -1,83 +1,27 @@
 package main
 
 import (
-	"fmt"
 	sse "github.com/alexandrevicenzi/go-sse"
-	"github.com/joho/godotenv"
+	config "github.com/ivankrtv/sse-service-event-board/config"
+	"github.com/ivankrtv/sse-service-event-board/rabbit"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/rs/cors"
 	"log"
 	"net/http"
-	"os"
-	"strconv"
 )
 
-func initEnvs() {
-	if err := godotenv.Load(); err != nil {
-		log.Fatal("No .env file found")
-	}
-}
-
-func initRabbit() <-chan amqp.Delivery {
-	username := os.Getenv("RABBIT_USER")
-	password := os.Getenv("RABBIT_PASSWORD")
-	host := os.Getenv("RABBIT_HOST")
-	port, err0 := strconv.Atoi(os.Getenv("RABBIT_PORT"))
-	if err0 != nil {
-		log.Fatal("Failed convert port to int")
-	}
-
-	rabbitURL := fmt.Sprintf("amqp://%s:%s@%s:%d/", username, password, host, port)
-	conn, err := amqp.Dial(rabbitURL)
-	if err != nil {
-		log.Fatal("Error connection to Rabbit server")
-	}
-	//defer conn.Close()
-
-	ch, err1 := conn.Channel()
-	if err1 != nil {
-		log.Fatal("Cannot connect to chanel")
-	}
-	//defer ch.Close()
-
-	q, err2 := ch.QueueDeclare(
-		"event-board",
-		false,
-		false,
-		false,
-		false,
-		nil,
-	)
-	if err2 != nil {
-		log.Fatal("Failed queue declare")
-	}
-
-	queue, err3 := ch.Consume(
-		q.Name,
-		"",
-		true,
-		false,
-		false,
-		false,
-		nil,
-	)
-	if err3 != nil {
-		log.Fatal("Failed consume queue")
-	}
-
-	return queue
-}
+var conf *config.Config
 
 func sendEvent(s *sse.Server, m amqp.Delivery) {
 	msg := string(m.Body)
-	s.SendMessage("/event/new-event/1", sse.SimpleMessage(msg))
+	s.SendMessage(conf.SSE.NewEventRout, sse.SimpleMessage(msg))
 }
 
 func main() {
-	initEnvs()
-	queue := initRabbit()
+	conf = config.NewConfig()
+	queue := rabbit.InitRabbit(conf.Rabbit)
 	s := sse.NewServer(nil)
-	//defer s.Shutdown()
+
 	go func() {
 		for msg := range queue {
 			sendEvent(s, msg)
@@ -85,9 +29,14 @@ func main() {
 	}()
 
 	serv := http.NewServeMux()
-	serv.Handle("/event/new-event/1", s)
+	serv.Handle(conf.SSE.NewEventRout, s)
+
 	handler := cors.AllowAll().Handler(serv)
-	http.ListenAndServe(":8000", handler)
+	err := http.ListenAndServe(conf.App.Port, handler)
+	if err != nil {
+		log.Print(err)
+		log.Fatal("Server can not start on :8000")
+	}
 
 	for {
 	}
